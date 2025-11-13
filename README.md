@@ -21,13 +21,23 @@ and for testing purposes you can prepare a small dataset as follows:
 python train.py config/train_shakespeare_char.py
 ```
 
-In order to run regular attention version:
+**1. In order to run regular attention version:**
+
+Train it 
+```sh
+python train.py config/train_shakespeare_char.py
+```
+and run to see a sample output:
+
+```sh
+python sample.py --out_dir=out-shakespeare-char
+```
 
 
-In order to run Multi-Head Latent Attention with Regular SVD version:
+**2. In order to run Multi-Head Latent Attention with Regular SVD version:**
 
 
-In order to run Multi-Head Latent Attention with Randomized SVD version:
+**3. In order to run Multi-Head Latent Attention with Randomized SVD version:**
 
 
 
