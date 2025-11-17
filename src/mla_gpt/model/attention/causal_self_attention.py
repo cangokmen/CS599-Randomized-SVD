@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from ..compression import SVDCompression, RandomizedSVDCompression
+
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
@@ -21,9 +23,29 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         
-        # SVD parameters
-        self.use_svd = getattr(config, 'use_svd', False)  # Disabled by default
-        self.svd_rank = getattr(config, 'svd_rank', None)  # If None, use full rank
+        # SVD compression configuration
+        self.use_svd = getattr(config, 'use_svd', False)
+        self.use_randomized_svd = getattr(config, 'use_randomized_svd', False)
+        self.svd_rank = getattr(config, 'svd_rank', None)
+        
+        # Randomized SVD specific parameters (following Tropp's recommendations)
+        self.svd_oversampling = getattr(config, 'svd_oversampling', 10)  # p parameter
+        self.svd_power_iter = getattr(config, 'svd_power_iter', 1)       # q parameter
+        
+        # Initialize compression modules
+        self.v_compressor = None
+        if self.use_svd:
+            if self.use_randomized_svd:
+                self.v_compressor = RandomizedSVDCompression(
+                    rank=self.svd_rank,
+                    oversampling=self.svd_oversampling,
+                    power_iterations=self.svd_power_iter
+                )
+            else:
+                self.v_compressor = SVDCompression(
+                    rank=self.svd_rank,
+                    compression_type='standard'
+                )
         
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
@@ -35,49 +57,55 @@ class CausalSelfAttention(nn.Module):
 
     def apply_svd_to_v(self, v):
         """
-        Apply SVD to the V (values) matrix using torch.linalg.svd
+        Apply SVD compression to the V (values) matrix
+        
+        Uses either standard SVD or Tropp's randomized SVD based on configuration.
         
         Args:
             v: Tensor of shape (B, nh, T, hs) where
                B = batch size, nh = number of heads, T = sequence length, hs = head size
         
         Returns:
-            Reconstructed V matrix after SVD decomposition
+            Compressed V matrix after SVD decomposition
         """
-        if not self.use_svd:
+        if not self.use_svd or self.v_compressor is None:
             return v
         
-        return self._standard_svd_reconstruction(v)
+        return self.v_compressor(v)
     
-    def _standard_svd_reconstruction(self, matrix):
-        """Standard SVD reconstruction using torch.linalg.svd"""
-        B, nh, T, hs = matrix.shape
+    def get_compression_info(self, v_shape):
+        """
+        Get information about the compression being applied
         
-        # Reshape matrix to (B*nh, T, hs) for SVD computation
-        matrix_reshaped = matrix.reshape(B * nh, T, hs)
-        
-        # Initialize output tensor
-        matrix_reconstructed = torch.zeros_like(matrix_reshaped)
-        
-        # Apply SVD to each (T, hs) matrix in the batch
-        for i in range(B * nh):
-            # Perform SVD: Matrix = U @ S @ Vh
-            U, S, Vh = torch.linalg.svd(matrix_reshaped[i], full_matrices=False)
+        Args:
+            v_shape: Shape of the V matrix (B, nh, T, hs)
             
-            # Determine rank for reconstruction
-            if self.svd_rank is not None:
-                rank = min(self.svd_rank, S.shape[0])
-            else:
-                rank = S.shape[0]  # Full rank reconstruction
-            
-            # Reconstruct with reduced rank
-            # Matrix_approx = U[:, :rank] @ diag(S[:rank]) @ Vh[:rank, :]
-            S_diag = torch.diag(S[:rank])
-            matrix_reconstructed[i] = U[:, :rank] @ S_diag @ Vh[:rank, :]
+        Returns:
+            Dictionary with compression information
+        """
+        if not self.use_svd or self.v_compressor is None:
+            return {'compression': 'none'}
         
-        # Reshape back to original dimensions
-        return matrix_reconstructed.reshape(B, nh, T, hs)
-
+        info = {
+            'compression': 'randomized_svd' if self.use_randomized_svd else 'standard_svd',
+            'rank': self.svd_rank,
+            'v_shape': v_shape
+        }
+        
+        if self.use_randomized_svd and hasattr(self.v_compressor, 'get_computational_complexity'):
+            # Add Tropp algorithm specific information
+            complexity_info = self.v_compressor.get_computational_complexity(v_shape)
+            memory_info = self.v_compressor.get_memory_usage(v_shape)
+            
+            info.update({
+                'oversampling': self.svd_oversampling,
+                'power_iterations': self.svd_power_iter,
+                'complexity': complexity_info,
+                'memory': memory_info
+            })
+        
+        return info
+    
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -87,7 +115,8 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # Apply SVD to V (values) matrix if enabled
+        # Apply SVD compression to V (values) matrix if enabled
+        # This uses either standard SVD or Tropp's randomized SVD
         v = self.apply_svd_to_v(v)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
