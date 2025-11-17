@@ -67,6 +67,7 @@ class Block(nn.Module):
         return x
 
 @dataclass
+@dataclass
 class GPTConfig:
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
@@ -79,6 +80,11 @@ class GPTConfig:
     # SVD Configuration
     use_svd: bool = False # True: apply SVD to value matrices. False: use original values
     svd_rank: int = None # Rank for SVD approximation. If None, use full rank
+    
+    # Randomized SVD Configuration (Tropp's Algorithm)
+    use_randomized_svd: bool = False # True: use Tropp's randomized SVD. False: use standard SVD
+    svd_oversampling: int = 10       # Oversampling parameter p (typically 5-10)
+    svd_power_iter: int = 1          # Power iterations q (0-2, typically 1)
     
     # MLA (Multi-Head Latent Attention) Configuration
     use_mla: bool = False # True: use MLA instead of standard attention. False: use CausalSelfAttention
