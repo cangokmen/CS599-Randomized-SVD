@@ -27,8 +27,20 @@ config = GPTConfig(
 # Tropp's Randomized SVD Configuration
 # =============================================================================
 
-# Enable SVD compression on V matrices
+# Enable SVD compression with individual matrix and algorithm controls
 config.use_svd = True
+
+# Individual matrix compression controls
+config.svd_apply_to_q = False    # Disable Q compression by default
+config.svd_apply_to_k = False    # Disable K compression by default  
+config.svd_apply_to_v = True     # Enable V compression (most beneficial)
+
+# Individual randomized SVD controls (per matrix type)
+config.use_randomized_svd_q = False    # Standard SVD for Q
+config.use_randomized_svd_k = False    # Standard SVD for K
+config.use_randomized_svd_v = True     # Randomized SVD for V
+
+# Global fallback (used when individual settings not specified)
 config.use_randomized_svd = True
 
 # Target rank for compression (key parameter for compression ratio)
@@ -79,15 +91,104 @@ compile = True
 
 # Configuration for different scenarios:
 
-def get_high_compression_config():
+def get_mixed_compression_config():
     """
-    Configuration for maximum compression (lower quality, higher speed)
+    Configuration with mixed standard and randomized SVD
+    Q: Standard SVD, K: Standard SVD, V: Randomized SVD
     """
-    high_compression_config = config
-    high_compression_config.svd_rank = 16          # 25% of original
-    high_compression_config.svd_oversampling = 5   # Lower oversampling for speed
-    high_compression_config.svd_power_iter = 0     # No power iterations for speed
-    return high_compression_config
+    mixed_config = config
+    mixed_config.svd_apply_to_q = True
+    mixed_config.svd_apply_to_k = True
+    mixed_config.svd_apply_to_v = True
+    mixed_config.use_randomized_svd_q = False   # Standard SVD
+    mixed_config.use_randomized_svd_k = False   # Standard SVD
+    mixed_config.use_randomized_svd_v = True    # Randomized SVD
+    mixed_config.svd_rank = 32
+    return mixed_config
+
+def get_all_randomized_config():
+    """
+    Configuration with randomized SVD for all matrices
+    """
+    all_rsvd_config = config
+    all_rsvd_config.svd_apply_to_q = True
+    all_rsvd_config.svd_apply_to_k = True
+    all_rsvd_config.svd_apply_to_v = True
+    all_rsvd_config.use_randomized_svd_q = True
+    all_rsvd_config.use_randomized_svd_k = True
+    all_rsvd_config.use_randomized_svd_v = True
+    all_rsvd_config.svd_rank = 32
+    all_rsvd_config.svd_oversampling = 10
+    all_rsvd_config.svd_power_iter = 1
+    return all_rsvd_config
+
+def get_all_standard_config():
+    """
+    Configuration with standard SVD for all matrices
+    """
+    all_std_config = config
+    all_std_config.svd_apply_to_q = True
+    all_std_config.svd_apply_to_k = True
+    all_std_config.svd_apply_to_v = True
+    all_std_config.use_randomized_svd_q = False
+    all_std_config.use_randomized_svd_k = False
+    all_std_config.use_randomized_svd_v = False
+    all_std_config.svd_rank = 32
+    return all_std_config
+
+def get_research_comparison_config():
+    """
+    Configuration for comparing standard vs randomized SVD
+    Q: Standard, K: Randomized, V: Randomized (for comparison)
+    """
+    research_config = config
+    research_config.svd_apply_to_q = True
+    research_config.svd_apply_to_k = True
+    research_config.svd_apply_to_v = True
+    research_config.use_randomized_svd_q = False   # Standard for comparison
+    research_config.use_randomized_svd_k = True    # Randomized
+    research_config.use_randomized_svd_v = True    # Randomized
+    research_config.svd_rank = 32
+    research_config.svd_oversampling = 10
+    research_config.svd_power_iter = 1
+    return research_config
+
+def get_qkv_balanced_config():
+    """
+    Configuration for balanced Q, K, V compression
+    """
+    qkv_config = config
+    qkv_config.svd_apply_to_q = True
+    qkv_config.svd_apply_to_k = True
+    qkv_config.svd_apply_to_v = True
+    qkv_config.svd_rank = 32
+    qkv_config.svd_oversampling = 10
+    qkv_config.svd_power_iter = 1
+    return qkv_config
+
+def get_kv_only_config():
+    """
+    Configuration for K, V compression (preserves query precision)
+    """
+    kv_config = config
+    kv_config.svd_apply_to_q = False  # Preserve query precision
+    kv_config.svd_apply_to_k = True
+    kv_config.svd_apply_to_v = True
+    kv_config.svd_rank = 32
+    return kv_config
+
+def get_aggressive_compression_config():
+    """
+    Configuration for maximum compression across all matrices
+    """
+    aggressive_config = config
+    aggressive_config.svd_apply_to_q = True
+    aggressive_config.svd_apply_to_k = True
+    aggressive_config.svd_apply_to_v = True
+    aggressive_config.svd_rank = 16          # Lower rank for max compression
+    aggressive_config.svd_oversampling = 5   # Lower oversampling for speed
+    aggressive_config.svd_power_iter = 0     # No power iterations for speed
+    return aggressive_config
 
 def get_high_quality_config():
     """
@@ -140,28 +241,54 @@ def get_adaptive_rank_config(sequence_length):
 
 def estimate_compression_ratio():
     """
-    Estimate memory and computational savings from randomized SVD
+    Estimate memory and computational savings from mixed SVD/randomized SVD
     """
     head_size = config.n_embd // config.n_head
     rank = config.svd_rank
     
-    # Memory compression ratio for V matrices
+    # Count matrices and their compression types
+    compression_summary = {
+        'Q': 'none',
+        'K': 'none', 
+        'V': 'none'
+    }
+    
+    if config.svd_apply_to_q:
+        compression_summary['Q'] = 'randomized_svd' if config.use_randomized_svd_q else 'standard_svd'
+    if config.svd_apply_to_k:
+        compression_summary['K'] = 'randomized_svd' if config.use_randomized_svd_k else 'standard_svd'
+    if config.svd_apply_to_v:
+        compression_summary['V'] = 'randomized_svd' if config.use_randomized_svd_v else 'standard_svd'
+    
+    num_compressed_matrices = sum([config.svd_apply_to_q, config.svd_apply_to_k, config.svd_apply_to_v])
+    num_randomized_matrices = sum([
+        config.svd_apply_to_q and config.use_randomized_svd_q,
+        config.svd_apply_to_k and config.use_randomized_svd_k,
+        config.svd_apply_to_v and config.use_randomized_svd_v
+    ])
+    
+    if num_compressed_matrices == 0:
+        print("No matrices selected for compression!")
+        return
+    
+    # Memory compression ratio per matrix
     original_params = head_size * head_size
     compressed_params = head_size * rank + rank + rank * head_size
-    memory_ratio = original_params / compressed_params
+    memory_ratio_per_matrix = original_params / compressed_params
     
-    # Computational speedup (approximate)
-    # Standard SVD: O(m * n * min(m,n))
-    # Randomized SVD: O(m * n * (k+p)) + O(m * k^2) + O(k^2 * n)
+    # Overall memory impact
+    total_original = 3 * original_params  # Q, K, V matrices
+    total_compressed = (3 - num_compressed_matrices) * original_params + num_compressed_matrices * compressed_params
+    overall_memory_ratio = total_original / total_compressed
     
+    # Computational analysis
     oversampling = config.svd_oversampling
-    m, n = head_size, head_size  # Square matrices for attention
+    m, n = head_size, head_size
     k = rank
     p = oversampling
     
-    standard_ops = m * n * min(m, n)
-    randomized_ops = m * n * (k + p) + m * k**2 + k**2 * n
-    computational_speedup = standard_ops / randomized_ops
+    standard_ops_per_matrix = m * n * min(m, n)
+    randomized_ops_per_matrix = m * n * (k + p) + m * k**2 + k**2 * n
     
     print(f"Configuration Summary:")
     print(f"  Head size: {head_size}")
@@ -169,9 +296,28 @@ def estimate_compression_ratio():
     print(f"  Oversampling: {oversampling}")
     print(f"  Power iterations: {config.svd_power_iter}")
     print(f"")
+    print(f"Compression Selection:")
+    for matrix, comp_type in compression_summary.items():
+        if comp_type == 'none':
+            print(f"  {matrix}: ✗ (no compression)")
+        elif comp_type == 'standard_svd':
+            print(f"  {matrix}: ✓ Standard SVD")
+        elif comp_type == 'randomized_svd':
+            print(f"  {matrix}: ✓ Randomized SVD")
+    
+    print(f"  Total compressed: {num_compressed_matrices}/3")
+    print(f"  Randomized: {num_randomized_matrices}/{num_compressed_matrices if num_compressed_matrices > 0 else 1}")
+    print(f"")
     print(f"Estimated Performance:")
-    print(f"  Memory compression ratio: {memory_ratio:.2f}x")
-    print(f"  Computational speedup: {computational_speedup:.2f}x")
+    print(f"  Per-matrix memory compression: {memory_ratio_per_matrix:.2f}x")
+    print(f"  Overall memory compression: {overall_memory_ratio:.2f}x")
+    
+    if num_randomized_matrices > 0:
+        randomized_speedup = standard_ops_per_matrix / randomized_ops_per_matrix
+        print(f"  Standard SVD ops per matrix: {standard_ops_per_matrix:,}")
+        print(f"  Randomized SVD ops per matrix: {randomized_ops_per_matrix:,}")
+        print(f"  Randomized speedup per matrix: {randomized_speedup:.2f}x")
+    
     print(f"  Rank ratio: {rank / head_size:.2%}")
 
 # =============================================================================
@@ -180,9 +326,19 @@ def estimate_compression_ratio():
 
 def validate_config(cfg):
     """
-    Validate that the randomized SVD configuration is reasonable
+    Validate configuration for mixed SVD/randomized SVD setup
     """
     head_size = cfg.n_embd // cfg.n_head
+    
+    # Check if any compression is enabled
+    compression_enabled = cfg.use_svd and any([
+        cfg.svd_apply_to_q,
+        cfg.svd_apply_to_k,
+        cfg.svd_apply_to_v
+    ])
+    
+    if cfg.use_svd and not compression_enabled:
+        print("Warning: SVD enabled but no matrices selected for compression")
     
     # Check rank is reasonable
     if cfg.svd_rank is not None:
@@ -195,29 +351,69 @@ def validate_config(cfg):
         if cfg.svd_rank < head_size * 0.2:
             print(f"Warning: Very low rank ({cfg.svd_rank}/{head_size}) - may hurt quality significantly")
     
-    # Check oversampling
-    if cfg.svd_oversampling < 5:
-        print(f"Warning: Low oversampling ({cfg.svd_oversampling}) - may reduce accuracy")
-    elif cfg.svd_oversampling > 20:
-        print(f"Warning: High oversampling ({cfg.svd_oversampling}) - diminishing returns")
+    # Check oversampling for randomized SVD matrices
+    randomized_matrices = [
+        (cfg.svd_apply_to_q and cfg.use_randomized_svd_q, 'Q'),
+        (cfg.svd_apply_to_k and cfg.use_randomized_svd_k, 'K'), 
+        (cfg.svd_apply_to_v and cfg.use_randomized_svd_v, 'V')
+    ]
     
-    # Check power iterations
-    if cfg.svd_power_iter > 3:
-        print(f"Warning: Many power iterations ({cfg.svd_power_iter}) - diminishing returns")
+    num_randomized = sum(enabled for enabled, _ in randomized_matrices)
+    
+    if num_randomized > 0:
+        if cfg.svd_oversampling < 5:
+            print(f"Warning: Low oversampling ({cfg.svd_oversampling}) - may reduce accuracy for randomized SVD")
+        elif cfg.svd_oversampling > 20:
+            print(f"Warning: High oversampling ({cfg.svd_oversampling}) - diminishing returns")
+        
+        if cfg.svd_power_iter > 3:
+            print(f"Warning: Many power iterations ({cfg.svd_power_iter}) - diminishing returns")
+    
+    # Matrix-specific recommendations
+    if compression_enabled:
+        print(f"\nCompression Configuration Analysis:")
+        
+        matrix_configs = [
+            ('Q', cfg.svd_apply_to_q, cfg.use_randomized_svd_q),
+            ('K', cfg.svd_apply_to_k, cfg.use_randomized_svd_k),
+            ('V', cfg.svd_apply_to_v, cfg.use_randomized_svd_v)
+        ]
+        
+        for matrix, enabled, randomized in matrix_configs:
+            if enabled:
+                comp_type = 'Randomized SVD' if randomized else 'Standard SVD'
+                print(f"  {matrix} matrix: {comp_type}")
+            else:
+                print(f"  {matrix} matrix: No compression")
+        
+        # Configuration recommendations
+        if cfg.svd_apply_to_q and cfg.svd_apply_to_k and cfg.svd_apply_to_v:
+            print("Note: Compressing all Q, K, V - monitor attention quality carefully")
+        
+        if num_randomized == 0 and compression_enabled:
+            print("Note: Using standard SVD only - consider randomized SVD for larger matrices")
+        elif num_randomized == sum([cfg.svd_apply_to_q, cfg.svd_apply_to_k, cfg.svd_apply_to_v]):
+            print("Note: Using randomized SVD for all compressed matrices")
+        else:
+            print("Note: Mixed standard/randomized SVD configuration")
     
     print("✅ Configuration validation passed")
 
 if __name__ == "__main__":
-    print("Tropp's Randomized SVD Configuration")
-    print("=" * 50)
+    print("Mixed Standard/Randomized SVD Configuration for Q, K, V Matrices")
+    print("=" * 70)
     
     # Show default configuration
     print("\nDefault Configuration:")
     print(f"  use_svd: {config.use_svd}")
-    print(f"  use_randomized_svd: {config.use_randomized_svd}")
     print(f"  svd_rank: {config.svd_rank}")
     print(f"  svd_oversampling: {config.svd_oversampling}")
     print(f"  svd_power_iter: {config.svd_power_iter}")
+    print(f"")
+    print(f"Matrix Compression:")
+    print(f"  Q compression: {config.svd_apply_to_q} ({'Randomized' if config.use_randomized_svd_q else 'Standard'} SVD)")
+    print(f"  K compression: {config.svd_apply_to_k} ({'Randomized' if config.use_randomized_svd_k else 'Standard'} SVD)")
+    print(f"  V compression: {config.svd_apply_to_v} ({'Randomized' if config.use_randomized_svd_v else 'Standard'} SVD)")
     
     # Validate and show estimates
     print("\n")

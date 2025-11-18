@@ -78,11 +78,23 @@ class GPTConfig:
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     
     # SVD Configuration
-    use_svd: bool = False # True: apply SVD to value matrices. False: use original values
+    use_svd: bool = False # True: apply SVD to matrices. False: use original matrices
     svd_rank: int = None # Rank for SVD approximation. If None, use full rank
     
+    # Individual matrix compression controls
+    svd_apply_to_q: bool = False # Apply SVD compression to Query matrices
+    svd_apply_to_k: bool = False # Apply SVD compression to Key matrices  
+    svd_apply_to_v: bool = True  # Apply SVD compression to Value matrices
+    
+    # Individual randomized SVD controls (per matrix type)
+    use_randomized_svd_q: bool = False # Use randomized SVD for Q matrices
+    use_randomized_svd_k: bool = False # Use randomized SVD for K matrices
+    use_randomized_svd_v: bool = False # Use randomized SVD for V matrices
+    
+    # Global randomized SVD toggle (applies to all matrices when individual not specified)
+    use_randomized_svd: bool = False # Global randomized SVD setting
+    
     # Randomized SVD Configuration (Tropp's Algorithm)
-    use_randomized_svd: bool = False # True: use Tropp's randomized SVD. False: use standard SVD
     svd_oversampling: int = 10       # Oversampling parameter p (typically 5-10)
     svd_power_iter: int = 1          # Power iterations q (0-2, typically 1)
     
